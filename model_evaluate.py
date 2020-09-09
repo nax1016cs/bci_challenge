@@ -1,29 +1,30 @@
 from EEGModels import ShallowConvNet
 from EEGConvNets import SCCNet
 from EEGModels import EEGNet
+from keras.models import load_model
+from keras.callbacks import ModelCheckpoint
+from keras.models import model_from_json
+from keras.optimizers import SGD
+from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import KFold
+from sklearn import metrics
+
 import scipy
 import keras
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
-from keras.models import load_model
-from keras.callbacks import ModelCheckpoint
 import keras.backend as K
 import pandas as pd
 import scipy.misc
-from keras.models import model_from_json
-from keras.optimizers import SGD
-from sklearn.metrics import confusion_matrix
-from sklearn.model_selection import KFold
 import math
 import copy
-from sklearn import metrics
 import statistics
 
 
 
-train_set = ["02", "06", "07", "11", "12", "13", "14", "16", "17", "18", "20", "21", "22", "23", "24", "26"]
-# train_set = ["06", "07"]
+# train_set = ["02", "06", "07", "11", "12", "13", "14", "16", "17", "18", "20", "21", "22", "23", "24", "26"]
+train_set = ["02" ,"06", "07"]
 
 test_set = ["01", "03", "04", "05", "08", "09", "10", "15", "19", "25"]
 epoch = 500
@@ -85,21 +86,42 @@ def create_model(network):
 
 def create_checkpoint(network, train_method, sid, count):
     if network == "SCCNet":
-        checkpoint = keras.callbacks.ModelCheckpoint('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', monitor='loss', verbose=0, save_best_only=True, mode='min', period=1)
+        checkpoint = keras.callbacks.ModelCheckpoint('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5',
+                             monitor='loss', verbose=0, save_best_only=True, mode='min', period=1)
     else:
-        checkpoint = tf.keras.callbacks.ModelCheckpoint('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', monitor='loss', verbose=0, save_best_only=True, mode='min', save_freq=1)
+        checkpoint = tf.keras.callbacks.ModelCheckpoint('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5',
+                             monitor='loss', verbose=0, save_best_only=True, mode='min', save_freq=1)
     
     return checkpoint
 
 def load_best_model(network, train_method, sid, count ):
     if network == "SCCNet":
-        model = load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
+        model = load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', 
+                        custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
     else:
-        model = tf.keras.models.load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
-    
+        model = tf.keras.models.load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5',
+                         custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
     return model
 
-def independant_training(network, sid, train_method, count):
+def evaluate_result(model, x_test, y_test):
+    ''' evaluate the model '''
+    loss, acc = model.evaluate(x_test, y_test,  verbose=0)
+
+    ''' confusion matrix '''
+    predictions = model.predict(x_test) 
+    cf_matrix = confusion_matrix(y_test.argmax(axis=1), predictions.argmax(axis=1))
+    
+    ''' auc value '''
+    fpr, tpr, thresholds = metrics.roc_curve(y_test.argmax(axis=1)+1, predictions[:, 1], pos_label=2)
+    auc = metrics.auc(fpr, tpr)
+    print("acc:", acc)
+    print("auc:", auc)
+    print("confusion_matrix:\n", cf_matrix, "\n\n")
+
+
+    return acc, auc, cf_matrix
+
+def individual(network, sid, train_method, count):
 
     data_x, data_y = load_data(sid, "training")
     ratio = 4
@@ -107,15 +129,14 @@ def independant_training(network, sid, train_method, count):
     skf = KFold( n_splits = ratio)
     acc_list = []
     auc_list = []
+    print("network:", network, "train_method:", train_method, "sid:", sid, "count:", count)
 
-    t = 1
     for train_index, test_index in skf.split(data_x, data_y):
      
+        # split the data into training data, validation data, and testing data
         x_train, x_test = data_x[train_index], data_x[test_index]
-
         y_train = tf.keras.utils.to_categorical(data_y[train_index], 2)
         y_test =  tf.keras.utils.to_categorical(data_y[test_index], 2)
-
         split_len = int(len(data_x)/ratio)
         x_val, y_val = x_train[-1 * split_len:], y_train[-1 * split_len:]
         x_train, y_train = x_train[:split_len*2], y_train[:split_len*2]
@@ -139,103 +160,60 @@ def independant_training(network, sid, train_method, count):
 
         model = load_best_model(network, train_method, sid, count)
 
-        
+        acc, auc, cf_matrix = evaluate_result(model, x_test, y_test)
 
-        
-        # model.save('trained_models/' + network + "_" + train_method + "_" + str(sid)   +'_' + str(count) + '_' + str(t)  + '.h5' )
-        t += 1
-
-        ''' evaluate the model '''
-        loss, acc = model.evaluate(x_test, y_test,  verbose=0)
         acc_list.append(acc)
-
-        ''' confusion matrix '''
-        predictions = model.predict(x_test) 
-        matrix = confusion_matrix(y_test.argmax(axis=1), predictions.argmax(axis=1))
-       
-        ''' auc value '''
-        fpr, tpr, thresholds = metrics.roc_curve(y_test.argmax(axis=1)+1, predictions[:, 1], pos_label=2)
-        auc = metrics.auc(fpr, tpr)
         auc_list.append(auc)
-
-
-        # print(matrix)
-        print(network, " " ,train_method, " ", sid)
-        # print("confusion matrix")
-        print(matrix)
-        # print("ind acc:", acc)
-        # print("ind auc:", metrics.auc(fpr, tpr))
-
 
     return (statistics.mean(acc_list), statistics.mean(auc_list))
 
 
 def cross_subject(network, sid, train_method, count):
+    print("network: ", network, "train_method: ", train_method, "sid: ", sid, "count: ", count)
+
 
     x_test, y_test = load_data(sid, "training")
     x_test, y_test = x_test[170:], y_test[170:]
-
-
-    y_test -= 1
-    y_test = np.array(y_test)
-    y_test = np.reshape(y_test, (len(y_test), 1))
     y_test = tf.keras.utils.to_categorical(y_test, 2)
+
 
 
     if train_method == "SI_FT":
         # load the SI model
-        model = tf.keras.models.load_model('model/' + network + str(sid)+ '.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
+        model = tf.keras.models.load_model('model/' + network + str(sid)+ '.h5',
+                         custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
 
-        # # reshape the training data
+        ''' reshape the training data '''
         x_train, y_train = load_data(sid, "training")
         x_train, y_train = x_train[:170], y_train[:170]
-
-        y_train -= 1
-        y_train = np.array(y_train)
-        y_train = np.reshape(y_train, (len(y_train), 1))
         y_train = tf.keras.utils.to_categorical(y_train, 2)
 
+        ''' get class weight '''
         weight = class_weight(y_train)
 
+        ''' reshape data '''
         trial_num =  int (len(x_train) /ch /sample)
-
         x_train = np.reshape(x_train, (170, kernel , ch, sample))
-        # print("y data:", y_train)
 
 
-        # print("y data:", x_train.shape)
+        checkpoint = tf.keras.callbacks.ModelCheckpoint('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5',
+                                     monitor='loss', verbose=0, save_best_only=True, mode='min', save_freq=1)
 
-        checkpoint = tf.keras.callbacks.ModelCheckpoint('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', monitor='loss', verbose=0, save_best_only=True, mode='min', save_freq=1)
-        
+
         history = model.fit(x_train, y_train , epochs = epoch, verbose = 0, validation_split = 0.25, 
             class_weight = weight, shuffle = True, callbacks = [checkpoint]
         )
 
-        model = tf.keras.models.load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
+        model = tf.keras.models.load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5',
+                         custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
 
-        loss, acc = model.evaluate(x_test, y_test,  verbose=0)
-        print(network, " " ,train_method, " ", sid)
-        print("acc:", acc)
-
-        predictions = model.predict(x_test) 
-        # print(np.array(predictions).shape)
-
-        fpr, tpr, thresholds = metrics.roc_curve(y_test.argmax(axis=1)+1, predictions[:, 1], pos_label=2)
-        auc = metrics.auc(fpr, tpr)
-        matrix = confusion_matrix(y_test.argmax(axis=1), predictions.argmax(axis=1))
-        print("confusion matrix:", matrix)
-        print("auc:", auc)
-
-        model.save('trained_models/' + network + "_" + train_method + "_" + str(sid)   +'_' + str(count)  + '.h5' )
-        
+        acc, auc, cf_matrix = evaluate_result(model, x_test, y_test)
         return acc, auc
 
     elif train_method == "SI"  or "SD":
-        # print(train_method, "!!!!!!!!!!")
         first = True
         for i in train_set:
             if i != sid:
-                # print("this is ", i)
                 if not first:
                     x_train = np.append(x_train, load_data(i, "training")[0])
                     y_train = np.append(y_train, load_data(i, "training")[1])
@@ -250,104 +228,47 @@ def cross_subject(network, sid, train_method, count):
         y_train = np.append(y_train, load_data(sid, "training")[1][:170])
 
 
-
-    y_train -= 1
-    y_train = np.array(y_train)
-    y_train = np.reshape(y_train, (len(y_train), 1))
+    
     y_train = tf.keras.utils.to_categorical(y_train, 2)
+    weight = class_weight(y_train)
+
 
     # reshape the training data
     trial_num =  int (len(x_train) /ch /sample)
-    print(trial_num, len(x_train))
     x_train = np.reshape(x_train, (trial_num, kernel, ch, sample))
-    weight = class_weight(y_train)
-    print("weight:", weight)
-    # print("training data" , len(x_train))
-    # print("y data:", y_train)
 
+    model = create_model(network)
 
-    
-
-    # create the network
-    if network == "EEGNet":
-        model = EEGNet(nb_classes= 2, Chans = ch, Samples = sample, )
-    
-    elif network == 'ShallowNet':
-        model = ShallowConvNet(nb_classes= 2, Chans = ch, Samples = sample,)
-    
-    elif network == 'SCCNet':
-        model = SCCNet((kernel, ch, sample))
-    # print(model.summary())
-
-    # batch_size = int(len(data_x)/8) if train_method == "ind" else len(data_x)*2
-    
-    # print("x data:", x_train.shape)
-    # print("y data:", y_train.shape)
-
-
+    checkpoint = create_checkpoint(network, train_method, sid, count)
     model.compile(loss='categorical_crossentropy', optimizer='adam',metrics=['accuracy'])
-    if network == "SCCNet":
-        checkpoint = keras.callbacks.ModelCheckpoint('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', monitor='loss', verbose=0, save_best_only=True, mode='min', period=1)
-    else:
-        checkpoint = tf.keras.callbacks.ModelCheckpoint('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', monitor='loss', verbose=0, save_best_only=True, mode='min', save_freq=1)
+   
     history = model.fit(x_train, y_train , epochs = epoch, verbose = 0, validation_split = 0.25, 
         class_weight = weight, shuffle = True, callbacks = [checkpoint]
     )
+    model = load_best_model(network, train_method, sid, count)
 
-    if network == "SCCNet":
-        model = load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
-    else:
-        model = tf.keras.models.load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
+    acc, auc, cf_matrix = evaluate_result(model, x_test, y_test)
 
-    loss, acc = model.evaluate(x_test, y_test,  verbose=0)
-    print(network, " " ,train_method, " ", sid)
-
-    print("acc:", acc)
-
-    predictions = model.predict(x_test) 
-    # print(np.array(predictions).shape)
-
-    fpr, tpr, thresholds = metrics.roc_curve(y_test.argmax(axis=1)+1, predictions[:, 1], pos_label=2)
-    auc = metrics.auc(fpr, tpr)
-    matrix = confusion_matrix(y_test.argmax(axis=1), predictions.argmax(axis=1))
-    print("confusion matrix:", matrix)
-    print("auc:", auc)
     if train_method == "SI":
         model.save('model/' + network + str(sid) + '.h5')
 
-    model.save('trained_models/' + network + "_" + train_method + "_" + str(sid)   +'_' + str(count)  + '.h5' )
     return (acc, auc)
 
 
-def eval(network, sid, train_method, count):
-    print("====== " , sid ," =======")
-    x_test, y_test = load_data(sid, "training")
-    x_test, y_test = x_test[170:], y_test[170:]
+# def eval(network, sid, train_method, count):
+#     print("====== " , sid ," =======")
+#     x_test, y_test = load_data(sid, "training")
+#     x_test, y_test = x_test[170:], y_test[170:]
 
 
-    y_test -= 1
-    y_test = np.array(y_test)
-    y_test = np.reshape(y_test, (len(y_test), 1))
-    y_test = tf.keras.utils.to_categorical(y_test, 2)
+#     y_test -= 1
+#     y_test = np.array(y_test)
+#     y_test = np.reshape(y_test, (len(y_test), 1))
+#     y_test = tf.keras.utils.to_categorical(y_test, 2)
 
-    weight = class_weight(y_test)
+#     weight = class_weight(y_test)
 
-    
-    # model = tf.keras.models.load_model('trained_models/' + network + "_" + train_method + "_" + str(sid)   +'_' + str(count)  + '.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log} )
-    # print(network, " " ,train_method, " ", sid)
-    # loss, acc = model.evaluate(x_test, y_test,  verbose=0)
-
-
-    # predictions = model.predict(x_test) 
-    # # print(np.array(predictions).shape)
-
-    # fpr, tpr, thresholds = metrics.roc_curve(y_test.argmax(axis=1)+1, predictions[:, 1], pos_label=2)
-    # auc = metrics.auc(fpr, tpr)
-    # matrix = confusion_matrix(y_test.argmax(axis=1), predictions.argmax(axis=1))
-    # print("confusion matrix:\n", matrix)
-    # print("acc:", acc)
-    # print("auc:", auc)
-    return (0, 0)
+#     return (0, 0)
 
 
 def result(train_method):
@@ -363,11 +284,10 @@ def result(train_method):
     scc = []
 
     for i in train_set:
-    # i = "26"
         if (train_method == "ind"):
-            # scc.append(independant_training("SCCNet", i, train_method, count))
-            eeg.append(independant_training("EEGNet", i, train_method, count))
-            shallow.append(independant_training("ShallowNet", i, train_method, count))
+            scc.append(individual("SCCNet", i, train_method, count))
+            eeg.append(individual("EEGNet", i, train_method, count))
+            shallow.append(individual("ShallowNet", i, train_method, count))
         else:
             scc.append(cross_subject("SCCNet", i, train_method, count))
             eeg.append(cross_subject("EEGNet", i, train_method, count))
@@ -383,10 +303,10 @@ def result(train_method):
 
 print("caculate independent............")
 result("ind")
-# print("caculate subject independent............")
-# result("SI")
-# print("caculate subject independent and fine tuning............")
-# result("SI_FT")
-# print("caculate subject dependent............")
-# result("SD")
+print("caculate subject independent............")
+result("SI")
+print("caculate subject independent and fine tuning............")
+result("SI_FT")
+print("caculate subject dependent............")
+result("SD")
 
