@@ -91,16 +91,18 @@ def create_checkpoint(network, train_method, sid, count):
     
     return checkpoint
 
+def load_best_model(network, train_method, sid, count ):
+    if network == "SCCNet":
+        model = load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
+    else:
+        model = tf.keras.models.load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
+    
+    return model
+
 def independant_training(network, sid, train_method, count):
 
     data_x, data_y = load_data(sid, "training")
     ratio = 4
-
-
-    # copy_y =  copy.deepcopy(data_y)
-    # copy_y = np.array(copy_y)
-    # copy_y = np.reshape(copy_y, (len(copy_y), 1))
-    # copy_y = tf.keras.utils.to_categorical(copy_y, 2)
 
     skf = KFold( n_splits = ratio)
     acc_list = []
@@ -135,24 +137,28 @@ def independant_training(network, sid, train_method, count):
          class_weight = weight, shuffle = True, callbacks = [checkpoint]
         )
 
+        model = load_best_model(network, train_method, sid, count)
+
         
 
-        if network == "SCCNet":
-            model = load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
-        else:
-            model = tf.keras.models.load_model('best_model/' + network + "_" + train_method + "_" + str(sid) + "_" + str(count) +'.h5', custom_objects={'square':square, 'safe_log': safe_log, 'log':log})
+        
         # model.save('trained_models/' + network + "_" + train_method + "_" + str(sid)   +'_' + str(count) + '_' + str(t)  + '.h5' )
         t += 1
 
+        ''' evaluate the model '''
         loss, acc = model.evaluate(x_test, y_test,  verbose=0)
-        # print("after acc", acc)
+        acc_list.append(acc)
 
+        ''' confusion matrix '''
         predictions = model.predict(x_test) 
-        # print(np.array(predictions).shape)
-
-        fpr, tpr, thresholds = metrics.roc_curve(y_test.argmax(axis=1)+1, predictions[:, 1], pos_label=2)
-        auc_list.append(metrics.auc(fpr, tpr))
         matrix = confusion_matrix(y_test.argmax(axis=1), predictions.argmax(axis=1))
+       
+        ''' auc value '''
+        fpr, tpr, thresholds = metrics.roc_curve(y_test.argmax(axis=1)+1, predictions[:, 1], pos_label=2)
+        auc = metrics.auc(fpr, tpr)
+        auc_list.append(auc)
+
+
         # print(matrix)
         print(network, " " ,train_method, " ", sid)
         # print("confusion matrix")
@@ -160,7 +166,6 @@ def independant_training(network, sid, train_method, count):
         # print("ind acc:", acc)
         # print("ind auc:", metrics.auc(fpr, tpr))
 
-        acc_list.append(acc)
 
     return (statistics.mean(acc_list), statistics.mean(auc_list))
 
@@ -360,9 +365,9 @@ def result(train_method):
     for i in train_set:
     # i = "26"
         if (train_method == "ind"):
-            scc.append(independant_training("SCCNet", i, train_method, count))
-            # eeg.append(independant_training("EEGNet", i, train_method, count))
-            # shallow.append(independant_training("ShallowNet", i, train_method, count))
+            # scc.append(independant_training("SCCNet", i, train_method, count))
+            eeg.append(independant_training("EEGNet", i, train_method, count))
+            shallow.append(independant_training("ShallowNet", i, train_method, count))
         else:
             scc.append(cross_subject("SCCNet", i, train_method, count))
             eeg.append(cross_subject("EEGNet", i, train_method, count))
